@@ -5,5 +5,5 @@ Funciona sem internet: os dados ficam no próprio celular (navegador) e podem se
 
 Criado por Charles Lobo Pinheiro, Engenheiro Agrônomo.
 
-- Site: publicado pela Vercel a cada envio para `main`.
+- Site: https://curral-novo.vercel.app (publicado pela Vercel a cada envio para `main`)
 - Versão nova: altere `VERSAO` em `sw.js` para os celulares baixarem a atualização.
