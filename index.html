@@ -383,17 +383,18 @@ function syncBadge(){
   const b=document.getElementById("sync");if(!b)return;
   if(MODE==="demo"){b.hidden=true;return}
   b.hidden=false;b.className="sync";let t;
-  if(MODE==="local")t="Salvo neste aparelho";
+  if(MODE==="local")t=CN.user?(CN.rodando?"Sincronizando…":CN.erro?"Conta: falha ao sincronizar":!online()?"Sem internet · guardado aqui":"Conta sincronizada"):"Salvo neste aparelho";
+  if(MODE==="local"&&CN.user){if(CN.rodando)b.classList.add("busy");else if(!online()||CN.erro)b.classList.add("off")}
   else if(!nPend())t="Sincronizado";
   else if(!online()||MODE==="cache"){b.classList.add("off");t=`Sem internet · ${nPend()} ${nPend()===1?"parte":"partes"} para enviar`}
   else{b.classList.add("busy");t="Sincronizando…"}
   b.textContent=t;
-  b.title=MODE==="local"?"Os dados ficam só neste navegador.":nPend()?"Seus registros estão guardados no aparelho e serão enviados sozinhos quando a internet voltar. Toque para tentar agora.":"Tudo enviado para a nuvem"+(ultimaSync?" em "+new Date(+ultimaSync).toLocaleString("pt-BR"):"")+".";
+  b.title=MODE==="local"?(CN.user?"Registros guardados neste aparelho e na conta da propriedade. Toque para sincronizar agora.":"Os dados ficam só neste navegador. Crie a conta em Mais › Minha conta para sincronizar entre aparelhos."):nPend()?"Seus registros estão guardados no aparelho e serão enviados sozinhos quando a internet voltar. Toque para tentar agora.":"Tudo enviado para a nuvem"+(ultimaSync?" em "+new Date(+ultimaSync).toLocaleString("pt-BR"):"")+".";
 }
 function withTimeout(pr,ms){return Promise.race([pr,new Promise((_,r)=>setTimeout(()=>r({code:"timeout"}),ms))])}
 async function persist(k){
   if(MODE==="demo")return;
-  if(MODE==="local"){try{localStorage.setItem("aprisco_"+k,JSON.stringify(bodyOf(k)))}catch(e){toast("Não foi possível salvar neste navegador")}return}
+  if(MODE==="local"){try{localStorage.setItem("aprisco_"+k,JSON.stringify(bodyOf(k)))}catch(e){toast("Não foi possível salvar neste navegador")}if(typeof cnAgendar==="function")cnAgendar();return}
   cacheSet(k);setDirty(k,true);syncBadge();
   if(MODE==="db"&&online())pushKey(k);
 }
@@ -418,6 +419,224 @@ window.addEventListener("offline",()=>{syncBadge();toast("Sem internet. Pode con
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)sincronizar()});
 setInterval(sincronizar,30000);
 function save(...ks){ks.forEach(k=>persist(k))}
+
+/* ===================== Conta da propriedade e sincronização automática (Firebase) =====================
+   Os dados continuam guardados NESTE aparelho (funciona sem internet). Com a conta aberta, sempre que houver
+   internet o app junta os registros deste aparelho com os da nuvem, registro por registro (cada animal,
+   pesagem, lançamento e ocorrência): o que mudou de um lado entra no outro, e o que foi apagado sai dos dois. */
+const FIREBASE_CONFIG={apiKey:"AIzaSyBf7hsL4NkL3QKgL_1_jTX3I7tbP3H4Hlk",authDomain:"curral-novo-b49d1.firebaseapp.com",projectId:"curral-novo-b49d1",storageBucket:"curral-novo-b49d1.firebasestorage.app",messagingSenderId:"516668828006",appId:"1:516668828006:web:849755cf07f071ca92c0a7"};
+const FB_VER="10.12.2";
+const NO_CLAUDE=/claudeusercontent\.com$|claude\.ai$/.test(location.hostname); // a página do Claude não deixa o app falar com a nuvem
+const CN={mod:null,app:null,auth:null,fs:null,user:null,perfil:null,status:"",erro:"",rodando:false,pendente:false,timer:null,aba:"entrar",carregando:null,temMapaTel:null};
+const contaLigada=()=>!!FIREBASE_CONFIG&&!NO_CLAUDE;
+const lsG=k=>{try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}};
+const lsS=(k,v)=>{try{if(v==null)localStorage.removeItem(k);else localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+function dataHora(ms){if(!ms)return "nunca";const d=new Date(+ms);return d.toLocaleDateString("pt-BR")+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+
+/* ---------- junção registro por registro (base = última versão sincronizada) ---------- */
+const jeq=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
+const ehObj=x=>x&&typeof x==="object"&&!Array.isArray(x);
+const idDe=x=>x&&typeof x==="object"&&x.id!=null?"i:"+x.id:"j:"+JSON.stringify(x);
+const listaComId=a=>Array.isArray(a)&&a.every(x=>x&&typeof x==="object"&&x.id!=null);
+function juntarLista(b,l,r){
+  b=b||[];l=l||[];r=r||[];const B=new Map(b.map(x=>[idDe(x),x])),L=new Map(l.map(x=>[idDe(x),x])),R=new Map(r.map(x=>[idDe(x),x]));
+  const dec=id=>{const inB=B.has(id),inL=L.has(id),inR=R.has(id),bv=B.get(id),lv=L.get(id),rv=R.get(id);
+    if(inL&&inR)return jeq(lv,bv)?rv:lv;           // mudou aqui: vale o daqui; senão vale o da nuvem
+    if(inL)return inB&&jeq(lv,bv)?undefined:lv;     // apagado na nuvem e não mexido aqui: sai
+    if(inR)return inB&&jeq(rv,bv)?undefined:rv;     // apagado aqui e não mexido na nuvem: sai
+    return undefined};
+  const out=[],visto=new Set();
+  for(const x of [...r,...l]){const id=idDe(x);if(visto.has(id))continue;visto.add(id);const v=dec(id);if(v!==undefined)out.push(v)}
+  return out;
+}
+function juntar(b,l,r,d=0){
+  if(ehObj(l)&&ehObj(r)){b=ehObj(b)?b:{};const out={};
+    for(const k of new Set([...Object.keys(l),...Object.keys(r)])){const v=juntar(b[k],l[k],r[k],d+1);if(v!==undefined)out[k]=v}
+    return out}
+  if(listaComId(l)&&listaComId(r))return juntarLista(listaComId(b)?b:[],l,r);
+  return jeq(l,b)?r:l;
+}
+
+/* ---------- Firebase ---------- */
+async function cnCarregar(){
+  if(!contaLigada())return false;if(CN.auth)return true;if(!online())return false;if(CN.carregando)return CN.carregando;
+  CN.carregando=(async()=>{try{
+    const base=`https://www.gstatic.com/firebasejs/${FB_VER}/`;
+    const [app,au,fs]=await Promise.all([import(base+"firebase-app.js"),import(base+"firebase-auth.js"),import(base+"firebase-firestore.js")]);
+    CN.mod={app,au,fs};CN.app=app.initializeApp(FIREBASE_CONFIG);CN.auth=au.getAuth(CN.app);CN.fs=fs.getFirestore(CN.app);
+    try{await au.setPersistence(CN.auth,au.browserLocalPersistence)}catch(e){}
+    au.onAuthStateChanged(CN.auth,async u=>{CN.user=u||null;if(u){await cnLerPerfil();cnSync()}else{CN.perfil=null;CN.status=""}cnRedesenhar()});
+    return true;
+  }catch(e){CN.erro="Não foi possível conectar à nuvem. Verifique a internet.";CN.carregando=null;cnRedesenhar();return false}})();
+  return CN.carregando;
+}
+/* login por telefone: e-mail cifrado com a senha (quem só sabe o número não descobre o e-mail) */
+const telDig=t=>{let d=String(t||"").replace(/\D/g,"");if(d.length>11&&d.startsWith("55"))d=d.slice(2);return d};
+const ehEmail=x=>/@/.test(String(x||""));
+async function hashTxt(t){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+async function chaveSenha(s,sal){const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(s),"PBKDF2",false,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",salt:new TextEncoder().encode(sal),iterations:150000,hash:"SHA-256"},k,{name:"AES-GCM",length:256},false,["encrypt","decrypt"])}
+const b64=u=>btoa(String.fromCharCode(...u)),unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function idTel(t){const d=telDig(t);return d.length>=10?await hashTxt("curral-novo:"+d):null}
+async function donoTel(t){const id=await idTel(t);if(!id)return null;const {doc,getDoc}=CN.mod.fs;const s=await getDoc(doc(CN.fs,"telefones/"+id));return s.exists()?(s.data().uid||null):null}
+async function gravarTel(t,email,senha){const d=telDig(t),id=await idTel(t);if(!id||!CN.auth.currentUser)return;const {doc,setDoc}=CN.mod.fs,iv=crypto.getRandomValues(new Uint8Array(12)),k=await chaveSenha(senha,"tel:"+d);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},k,new TextEncoder().encode(email)));
+  await setDoc(doc(CN.fs,"telefones/"+id),{uid:CN.auth.currentUser.uid,iv:b64(iv),ct:b64(ct),ts:Date.now()})}
+async function apagarTel(t){const id=await idTel(t);if(!id)return;try{const {doc,deleteDoc}=CN.mod.fs;await deleteDoc(doc(CN.fs,"telefones/"+id))}catch(e){}}
+async function emailDoTel(t,senha){const id=await idTel(t);if(!id)throw{code:"tel/invalido"};const {doc,getDoc}=CN.mod.fs;const s=await getDoc(doc(CN.fs,"telefones/"+id));if(!s.exists())throw{code:"tel/nao-encontrado"};
+  const r=s.data();try{const k=await chaveSenha(senha,"tel:"+telDig(t));return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(r.iv)},k,unb64(r.ct)))}catch(e){throw{code:"tel/senha"}}}
+function cnErro(e){const c=e?.code||"";return({"auth/email-already-in-use":"Este e-mail já tem conta. Use Já tenho conta.","auth/invalid-credential":"E-mail ou senha incorretos.","auth/wrong-password":"E-mail ou senha incorretos.",
+  "auth/user-not-found":"Não existe conta com este e-mail.","auth/weak-password":"A senha precisa ter pelo menos 6 caracteres.","auth/invalid-email":"E-mail inválido.",
+  "auth/network-request-failed":"Sem internet. Tente de novo quando tiver sinal.","auth/too-many-requests":"Muitas tentativas. Aguarde alguns minutos.","auth/requires-recent-login":"Por segurança, saia e entre de novo antes de mudar estes dados.",
+  "permission-denied":"A nuvem recusou o acesso.","unavailable":"Sem conexão com a nuvem agora.","tel/invalido":"Telefone inválido. Use DDD e número, ex.: (88) 9 9999-9999.",
+  "tel/nao-encontrado":"Não existe conta com este telefone. Entre com o e-mail ou crie a conta.","tel/senha":"Telefone ou senha incorretos. Se você trocou a senha pelo link do e-mail, entre uma vez com o e-mail.",
+  "tel/em-uso":"Este telefone já está em outra conta."})[c]||("Erro: "+(c||e?.message||"desconhecido"))}
+async function cnLerPerfil(){try{const {doc,getDoc}=CN.mod.fs;const s=await getDoc(doc(CN.fs,"fazendas/"+CN.user.uid));CN.perfil=s.exists()?s.data():null;
+  try{CN.temMapaTel=CN.perfil?.telefone?(await donoTel(CN.perfil.telefone))===CN.user.uid:null}catch(e){CN.temMapaTel=null}
+  if(CN.perfil?.nomeFazenda&&!S.config.nome&&MODE!=="demo"){S.config.nome=CN.perfil.nomeFazenda;save("config")}}catch(e){}}
+
+/* ---------- sincronização ---------- */
+function cnAgendar(){if(!CN.user)return;if(CN.rodando){CN.pendente=true;return}clearTimeout(CN.timer);CN.timer=setTimeout(()=>cnSync(),4000)}
+function gravarLocal(k){try{localStorage.setItem("aprisco_"+k,JSON.stringify(bodyOf(k)))}catch(e){}}
+async function cnSync(manual){
+  if(!CN.user||MODE==="db"||MODE==="cache")return;
+  if(!online()){CN.status="Sem internet: os registros ficam guardados aqui e sobem quando houver sinal.";cnRedesenhar();return}
+  if(CN.rodando){CN.pendente=true;return}
+  CN.rodando=true;CN.erro="";CN.status="Sincronizando…";cnRedesenhar();syncBadge();
+  try{
+    const {collection,getDocs,doc,writeBatch,setDoc}=CN.mod.fs,uid=CN.user.uid,base="fazendas/"+uid+"/dados";
+    const rem={};(await getDocs(collection(CN.fs,base))).docs.forEach(d=>{try{rem[d.id]=JSON.parse(d.data().j)}catch(e){}});
+    const temNuvem=KEYS.some(k=>rem[k]!=null),primeira=lsG("cn_conta")!==uid;let recebidos=0,enviados=0;
+    if(MODE==="demo"){
+      if(temNuvem){ // aparelho novo: traz o rebanho da conta
+        const got={};KEYS.forEach(k=>{if(rem[k]!=null)got[k]=rem[k]});
+        S={animais:[],pesagens:[],caixa:[],sanidade:[],tarefas:{feitos:{}},config:{...CONFIG_PADRAO,iniciado:true},racao:{ingredientes:ingPadrao()}};
+        applyLoaded(got);S.config.iniciado=true;MODE="local";try{localStorage.setItem("cn_mode","local")}catch(e){}
+        KEYS.forEach(k=>{gravarLocal(k);lsS("cn_base_"+k,rem[k]??null)});_dietasCache=null;recebidos=Object.keys(got).length;
+      }
+    }else{
+      const ops=[];
+      for(const k of KEYS){
+        const l=JSON.parse(JSON.stringify(bodyOf(k))),r=rem[k],b=primeira?null:lsG("cn_base_"+k);
+        const m=r==null?l:juntar(b==null?{}:b,l,r);
+        if(!jeq(m,l)){applyLoaded({[k]:m});gravarLocal(k);recebidos++}
+        if(!jeq(m,r))ops.push([k,JSON.parse(JSON.stringify(bodyOf(k)))]);
+        else lsS("cn_base_"+k,m);
+      }
+      if(ops.length){const bt=writeBatch(CN.fs);ops.forEach(([k,v])=>bt.set(doc(CN.fs,base+"/"+k),{j:JSON.stringify(v),ts:Date.now()}));await bt.commit();ops.forEach(([k,v])=>lsS("cn_base_"+k,v));enviados=ops.length}
+      if(CN.perfil&&S.config.nome&&CN.perfil.nomeFazenda!==S.config.nome){CN.perfil={...CN.perfil,nomeFazenda:S.config.nome};await setDoc(doc(CN.fs,"fazendas/"+uid),CN.perfil)}
+    }
+    lsS("cn_conta",uid);lsS("cn_ultSync",Date.now());
+    CN.status=MODE==="demo"?"Conta conectada. Toque em Começar meu rebanho (ou importe a planilha) e os registros passam a sincronizar sozinhos.":`Sincronizado. ${recebidos?recebidos+" parte(s) recebida(s) da nuvem, ":""}${enviados?enviados+" parte(s) enviada(s).":"nada novo para enviar."}`;
+    if(recebidos)_dietasCache=null;
+    if(manual)toast("Sincronização concluída");
+    if(recebidos)render();
+  }catch(e){CN.erro=cnErro(e);CN.status=""}
+  finally{CN.rodando=false;cnRedesenhar();syncBadge();if(CN.pendente){CN.pendente=false;cnAgendar()}}
+}
+function cnRedesenhar(){if(ui.tab==="conta"&&!$("#modalRoot .modal-back")&&!document.activeElement?.closest?.("#cnBox"))render();else{const st=$("#cnStatus");if(st){st.textContent=CN.erro||CN.status||"";st.style.color=CN.erro?"var(--bad)":""}}syncBadge()}
+
+/* ---------- tela Minha conta ---------- */
+function vConta(){
+  if(!contaLigada())return `<section class="panel"><h2>Minha conta</h2><p>A conta da propriedade funciona no site do Curral Novo: <b>curral-novo.vercel.app</b>.</p></section>`;
+  const F=(id,l,t,v,extra="")=>`<label class="f">${l}<input id="${id}" type="${t}" value="${esc(v||"")}" ${extra}></label>`;
+  const st=`<p class="small" id="cnStatus" style="margin-top:8px;${CN.erro?"color:var(--bad)":""}">${esc(CN.erro||CN.status||"")}</p>`;
+  if(CN.user){const p=CN.perfil||{};
+    return `<section class="panel" id="cnBox"><h2>Minha conta</h2>
+     <p class="small muted">Sempre que este aparelho tiver internet, os registros sobem para a sua conta e os feitos em outro celular ou computador descem para cá. Sem internet, tudo continua sendo salvo aqui.</p>
+     <div class="form-grid"><div><span class="small muted">Propriedade</span><br><b>${esc(p.nomeFazenda||S.config.nome||"—")}</b></div><div><span class="small muted">E-mail de acesso</span><br><b>${esc(CN.user.email||"—")}</b></div><div><span class="small muted">Telefone de acesso</span><br><b>${esc(p.telefone||"—")}</b></div><div><span class="small muted">Última sincronização</span><br><b>${dataHora(lsG("cn_ultSync"))}</b></div></div>
+     ${p.telefone&&CN.temMapaTel===false?`<div class="banner" style="margin-top:12px"><div class="grow">Para entrar também pelo telefone em outro aparelho, digite a sua senha em <b>Senha atual</b> e toque em <b>Salvar alterações</b>.</div></div>`:""}
+     ${st}
+     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn primary" data-cn="sync" ${CN.rodando?"disabled":""}>Sincronizar agora</button><button class="btn" data-cn="sair">Sair da conta</button></div>
+     <form id="cnAlterar" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)" autocomplete="on"><h3>Alterar dados da conta</h3><div class="form-grid">
+      ${F("caFazenda","Nome da propriedade","text",p.nomeFazenda||S.config.nome,'required autocomplete="organization"')}
+      ${F("caTelefone","Telefone (WhatsApp)","tel",p.telefone,'required autocomplete="tel"')}
+      ${F("caEmail","E-mail","email",CN.user.email||p.email,'required autocomplete="email"')}
+      ${F("caNova","Nova senha (vazio = manter)","password","",'minlength="6" autocomplete="new-password"')}
+      ${F("caNova2","Repita a nova senha","password","",'minlength="6" autocomplete="new-password"')}
+      ${F("caAtual","Senha atual (obrigatória)","password","",'required autocomplete="current-password"')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary" type="submit">Salvar alterações</button><button class="btn" type="button" data-cn="desfazer">Desfazer</button></div>
+      <p class="small muted" style="margin-top:6px">Ao trocar o e-mail, o Google envia um link de confirmação para o e-mail novo; a troca vale depois que você tocar no link.</p></form></section>`}
+  if(!online())return `<section class="panel"><h2>Minha conta</h2><p>Conecte o aparelho à internet para entrar ou criar a conta da propriedade. Os registros feitos agora continuam guardados aqui.</p></section>`;
+  if(!CN.auth){cnCarregar();return `<section class="panel"><h2>Minha conta</h2><p class="small muted" id="cnStatus">${esc(CN.erro||"Conectando…")}</p></section>`}
+  const criar=CN.aba==="criar";
+  return `<section class="panel" id="cnBox"><h2>${criar?"Criar a conta da propriedade":"Entrar na conta da propriedade"}</h2>
+   <p class="small muted">Com a conta, o rebanho fica igual no celular e no computador: quando o aparelho fica online, os registros se juntam sozinhos. Os dados de cada propriedade só são vistos com o e-mail ou telefone e a senha dela.</p>
+   <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0"><button class="btn ${criar?"":"primary"}" data-cn="abaEntrar">Já tenho conta</button><button class="btn ${criar?"primary":""}" data-cn="abaCriar">Criar conta</button></div>
+   <form id="cnForm" autocomplete="on"><div class="form-grid">
+    ${criar?F("ctFazenda","Nome da propriedade","text",S.config.nome&&MODE!=="demo"?S.config.nome:"",'required autocomplete="organization"')+F("ctTelefone","Telefone (WhatsApp)","tel","",'required placeholder="(88) 9 9999-9999" autocomplete="tel"'):""}
+    ${criar?F("ctEmail","E-mail","email","",'required autocomplete="email"'):F("ctEmail","E-mail ou telefone","text","",'required autocomplete="username" placeholder="seu@email.com ou (88) 9 9999-9999"')}
+    ${F("ctSenha","Senha (mínimo 6 caracteres)","password","",`required minlength="6" autocomplete="${criar?"new-password":"current-password"}"`)}
+    ${criar?F("ctSenha2","Repita a senha","password","",'required minlength="6" autocomplete="new-password"'):""}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary" type="submit">${criar?"Criar conta e sincronizar":"Entrar"}</button>${criar?"":`<button class="btn" type="button" data-cn="esqueci">Esqueci a senha</button>`}</div></form>
+   ${st}</section>`;
+}
+document.addEventListener("click",async e=>{
+  const t=e.target.closest&&e.target.closest("[data-cn]");if(!t)return;
+  const a=t.dataset.cn,au=CN.mod?.au;const msg=(m,bad)=>{const s=$("#cnStatus");if(s){s.textContent=m;s.style.color=bad?"var(--bad)":""}};
+  if(a==="abaEntrar"||a==="abaCriar"){CN.aba=a==="abaCriar"?"criar":"entrar";CN.erro="";render();return}
+  if(a==="sync"){cnSync(true);return}
+  if(a==="desfazer"){CN.erro="";CN.status="";render();return}
+  if(a==="sair"){modal(`<h2>Sair da conta?</h2><p>Os dados continuam neste aparelho, mas param de sincronizar até você entrar de novo.</p><div class="actions"><button class="btn" data-close="1">Cancelar</button><button class="btn primary" id="cnOkSair">Sair</button></div>`);
+    $("#cnOkSair").onclick=async()=>{fechar();try{await au.signOut(CN.auth)}catch(x){}CN.status="";render()};return}
+  if(a==="esqueci"){const em=$("#ctEmail")?.value.trim();if(!em||!ehEmail(em)){msg("Digite o E-MAIL da conta (não o telefone) e toque de novo em Esqueci a senha.",true);return}
+    try{await au.sendPasswordResetEmail(CN.auth,em);msg("Enviamos um e-mail para criar uma senha nova. Veja também a caixa de spam.")}catch(x){msg(cnErro(x),true)}}
+});
+document.addEventListener("submit",async e=>{
+  if(e.target.id==="cnAlterar"){e.preventDefault();cnSalvarAlteracoes();return}
+  if(e.target.id!=="cnForm")return;e.preventDefault();
+  const au=CN.mod.au,{doc,setDoc,getDoc}=CN.mod.fs,msg=(m,bad)=>{CN.erro=bad?m:"";const s=$("#cnStatus");if(s){s.textContent=m;s.style.color=bad?"var(--bad)":""}};
+  const email=$("#ctEmail").value.trim(),senha=$("#ctSenha").value;
+  try{
+    if(CN.aba==="criar"){
+      const faz=$("#ctFazenda").value.trim(),tel=$("#ctTelefone").value.trim();
+      if(senha!==$("#ctSenha2").value){msg("As duas senhas não são iguais.",true);return}
+      if(telDig(tel).length<10){msg("Informe o telefone com DDD.",true);return}
+      msg("Criando a conta…");
+      if(await donoTel(tel)){msg(cnErro({code:"tel/em-uso"}),true);return}
+      const cred=await au.createUserWithEmailAndPassword(CN.auth,email,senha);
+      try{await gravarTel(tel,email,senha)}catch(x){}
+      CN.perfil={nomeFazenda:faz,telefone:tel,email,criadoEm:Date.now()};CN.temMapaTel=true;
+      await setDoc(doc(CN.fs,"fazendas/"+cred.user.uid),CN.perfil);
+      if(faz&&MODE!=="demo"){S.config.nome=faz;save("config")}
+    }else{
+      msg("Entrando…");
+      const login=ehEmail(email)?email:await emailDoTel(email,senha);
+      const cred=await au.signInWithEmailAndPassword(CN.auth,login,senha);
+      try{const pf=(await getDoc(doc(CN.fs,"fazendas/"+cred.user.uid))).data()||{};
+        if(pf.telefone)await gravarTel(pf.telefone,cred.user.email,senha);
+        if(pf.email!==cred.user.email){CN.perfil={...pf,email:cred.user.email};await setDoc(doc(CN.fs,"fazendas/"+cred.user.uid),CN.perfil)}}catch(x){}
+    }
+    CN.erro="";
+  }catch(x){msg(cnErro(x),true)}
+});
+async function cnSalvarAlteracoes(){
+  const au=CN.mod.au,{doc,setDoc}=CN.mod.fs,u=CN.auth.currentUser,msg=(m,bad)=>{CN.erro=bad?m:"";CN.status=bad?"":m;const s=$("#cnStatus");if(s){s.textContent=m;s.style.color=bad?"var(--bad)":""}};
+  if(!u){msg("Entre na conta de novo.",true);return}
+  const faz=$("#caFazenda").value.trim(),tel=$("#caTelefone").value.trim(),email=$("#caEmail").value.trim(),nova=$("#caNova").value,nova2=$("#caNova2").value,atual=$("#caAtual").value;
+  if(telDig(tel).length<10){msg("Informe o telefone com DDD.",true);return}
+  if(nova&&nova!==nova2){msg("As duas senhas novas não são iguais.",true);return}
+  if(nova&&nova.length<6){msg("A senha nova precisa ter pelo menos 6 caracteres.",true);return}
+  try{
+    msg("Conferindo a senha atual…");
+    await au.reauthenticateWithCredential(u,au.EmailAuthProvider.credential(u.email,atual));
+    const p=CN.perfil||{},telAnt=p.telefone||"";
+    if(telDig(tel)!==telDig(telAnt)){const d=await donoTel(tel);if(d&&d!==u.uid){msg(cnErro({code:"tel/em-uso"}),true);return}}
+    const senhaFinal=nova||atual;
+    if(nova){msg("Trocando a senha…");await au.updatePassword(u,nova)}
+    let aviso="";
+    if(email.toLowerCase()!==String(u.email||"").toLowerCase()){msg("Enviando confirmação para o e-mail novo…");await au.verifyBeforeUpdateEmail(u,email);aviso=` Enviamos um link para ${email}: toque nele para concluir a troca do e-mail e depois entre com o e-mail novo.`}
+    if(telAnt&&telDig(tel)!==telDig(telAnt))await apagarTel(telAnt);
+    await gravarTel(tel,u.email,senhaFinal);
+    CN.perfil={...p,nomeFazenda:faz,telefone:tel,email:u.email};await setDoc(doc(CN.fs,"fazendas/"+u.uid),CN.perfil);CN.temMapaTel=true;
+    if(faz&&MODE!=="demo"){S.config.nome=faz;save("config")}
+    CN.erro="";CN.status="Dados da conta atualizados."+aviso;render();toast("Dados da conta atualizados");
+  }catch(x){msg(cnErro(x),true)}
+}
+window.addEventListener("online",()=>{if(!contaLigada())return;cnCarregar().then(ok=>{if(ok&&CN.user)cnSync();else cnRedesenhar()})});
+window.addEventListener("offline",()=>cnRedesenhar());
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&CN.user)cnAgendar()});
+setInterval(()=>{if(CN.user&&online()&&!document.hidden)cnSync()},5*60*1000);
+if(contaLigada())setTimeout(()=>cnCarregar(),1500);
 
 async function initStore(){
   /* abre na hora com o que está guardado no aparelho, mesmo sem internet */
@@ -920,7 +1139,7 @@ function vAtividades(){
 }
 
 /* ===================== Renderização ===================== */
-const TABS=[["hoje","Hoje"],["trato","Trato"],["lotes","Lotes"],["rebanho","Rebanho"],["caixa","Caixa"],["painel","Painel"],["estrutura","Estrutura etária"],["atividades","Atividades"],["pesagens","Pesagens"],["decisao","Manter ou vender"],["abates","Abates"],["sanidade","Sanidade"],["racao","Ração"],["base","Base técnica"]];
+const TABS=[["hoje","Hoje"],["trato","Trato"],["lotes","Lotes"],["rebanho","Rebanho"],["caixa","Caixa"],["painel","Painel"],["estrutura","Estrutura etária"],["atividades","Atividades"],["pesagens","Pesagens"],["decisao","Manter ou vender"],["abates","Abates"],["sanidade","Sanidade"],["racao","Ração"],["base","Base técnica"],["conta","Minha conta"]];
 const TABS_MAIN=5;
 function renderTabs(){
   const sec=TABS.slice(TABS_MAIN),abre=ui.mais||sec.some(([k])=>k===ui.tab);const b=([k,n])=>`<button role="tab" aria-selected="${ui.tab===k}" data-tab="${k}">${n}</button>`;
@@ -935,7 +1154,7 @@ function banner(){
 function render(){
   renderTabs();syncBadge();setTimeout(()=>{const bi=document.getElementById("btnInstalar");if(bi)bi.hidden=!window.__instalar},0);
   $("#farmName").textContent=S.config.nome?S.config.nome+(MODE==="demo"?" (exemplo)":""):"";
-  const v={hoje:vHoje,lotes:vLotes,estrutura:vEstrutura,painel:vPainel,atividades:vAtividades,trato:vTrato,abates:vAbates,rebanho:vRebanho,pesagens:vPesagens,decisao:vDecisao,caixa:vCaixa,sanidade:vSanidade,racao:vRacao,base:vBase}[ui.tab]||vHoje;
+  const v={hoje:vHoje,lotes:vLotes,estrutura:vEstrutura,painel:vPainel,atividades:vAtividades,trato:vTrato,abates:vAbates,rebanho:vRebanho,pesagens:vPesagens,decisao:vDecisao,caixa:vCaixa,sanidade:vSanidade,racao:vRacao,base:vBase,conta:vConta}[ui.tab]||vHoje;
   $("#app").innerHTML=banner()+v();
   if(ui.tab==="racao"||ui.tab==="lotes")bindRacao();
   if(ui.tab==="abates")bindAbates();
@@ -1787,7 +2006,7 @@ function vBase(){
    ${MODE!=="demo"?`<span class="muted small" style="align-self:center">Dados salvos ${MODE==="db"||MODE==="cache"?"neste aparelho e na nuvem, junto a este app":"neste aparelho"}.</span>`:""}</div>
    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><b>Cópia de segurança</b>
    <p class="small muted" style="margin:2px 0 8px">Gere um arquivo com todo o rebanho e guarde no Drive ou mande para você no WhatsApp. Serve para não perder dados se o celular quebrar e para passar o rebanho para outro aparelho.</p>
-   <div style="display:flex;gap:8px;flex-wrap:wrap">${MODE!=="demo"?`<button class="btn" data-act="backup">Baixar cópia de segurança</button>`:""}<button class="btn" data-act="restaurar">Restaurar uma cópia</button><button class="btn" data-act="instalar" id="btnInstalar" hidden>Instalar no celular</button></div></div>
+   <div style="display:flex;gap:8px;flex-wrap:wrap">${MODE!=="demo"?`<button class="btn" data-act="backup">Baixar cópia de segurança</button>`:""}<button class="btn" data-act="restaurar">Restaurar uma cópia</button>${contaLigada()?`<button class="btn" data-tab="conta">Minha conta e sincronização</button>`:""}<button class="btn" data-act="instalar" id="btnInstalar" hidden>Instalar no celular</button></div></div>
   </section>`;
 }
 
@@ -2428,6 +2647,7 @@ document.addEventListener("click",e=>{
   if(t.dataset.tab){if(t.dataset.tix!=null)ui.tratoIx=+t.dataset.tix;ui.tab=t.dataset.tab;try{localStorage.setItem("aprisco_tab",ui.tab)}catch(x){}render();window.scrollTo(0,0);return}
   if(t.dataset.animal){fichaAnimal(t.dataset.animal);return}
   const a=t.dataset.act,id=t.dataset.id;
+  if(a==="sync"&&MODE==="local"){if(CN.user)cnSync(true);else{ui.tab="conta";render();window.scrollTo(0,0)}return}
   if(a==="sync"){if(!online())toast("Sem internet agora. Seus registros estão guardados e serão enviados sozinhos.");else if(MODE==="cache")toast("Sem conexão com a nuvem. Feche e abra o app com internet para enviar.");else{sincronizar();toast(nPend()?"Enviando registros…":"Tudo sincronizado")}}
   else if(a==="comecar")comecarReal();
   else if(a==="backup")exportarBackup();

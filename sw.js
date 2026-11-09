@@ -1,5 +1,5 @@
 /* Curral Novo — guarda o app no aparelho para abrir sem internet */
-const VERSAO = "curral-novo-v1";
+const VERSAO = "curral-novo-v2";
 const ARQUIVOS = ["./", "./index.html", "./manifest.webmanifest",
   "./vendor/jspdf.umd.min.js", "./vendor/jspdf.plugin.autotable.min.js", "./vendor/xlsx.full.min.js",
   "./icons/icon-192.png", "./icons/icon-512.png"];
