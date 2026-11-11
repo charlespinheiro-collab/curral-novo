@@ -1151,8 +1151,22 @@ function banner(){
   return `<div class="banner"><div class="grow"><b>Modo demonstração.</b> Você está vendo um rebanho de exemplo com dados fictícios. Alterações feitas agora não são salvas.</div>
   <button class="btn" data-act="importar">Importar planilha de cadastro</button><button class="btn primary" data-act="comecar">Começar meu rebanho</button></div>`;
 }
+function appInstalado(){try{return matchMedia("(display-mode: standalone)").matches||navigator.standalone===true}catch(e){return false}}
+function bannerInstalar(){
+  let f=null;try{f=localStorage.getItem("cn_instalar_fechado")}catch(e){}
+  if(appInstalado()||f)return "";
+  return `<div class="banner"><div class="grow"><b>Instale o Curral Novo no celular.</b> Ele fica na tela inicial como um aplicativo e abre mesmo sem internet.</div>
+  <button type="button" class="btn" data-act="instalar-fechar">Agora não</button><button type="button" class="btn primary" data-act="instalar">Instalar</button></div>`;
+}
+function comoInstalar(){
+  const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  const passos=ios
+    ?`<p>No iPhone, a instalação é feita pelo Safari:</p><ol><li>Abra este endereço no <b>Safari</b>.</li><li>Toque no botão <b>Compartilhar</b> (quadrado com a seta para cima).</li><li>Escolha <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>.</li></ol>`
+    :`<p>No celular Android, use o Chrome:</p><ol><li>Toque nos <b>três pontinhos</b> no canto de cima do navegador.</li><li>Escolha <b>Adicionar à tela inicial</b> ou <b>Instalar aplicativo</b>.</li><li>Confirme em <b>Instalar</b>.</li></ol><p class="muted small">No computador, clique no ícone de instalar que aparece no fim da barra de endereço.</p>`;
+  modal(`<h2>Instalar no celular</h2>${passos}<p class="muted small">Depois de instalado, o Curral Novo abre pelo ícone na tela inicial e funciona sem internet.</p><div class="actions"><button type="button" class="btn primary" data-close="1">Entendi</button></div>`);
+}
 function render(){
-  renderTabs();syncBadge();setTimeout(()=>{const bi=document.getElementById("btnInstalar");if(bi)bi.hidden=!window.__instalar},0);
+  renderTabs();syncBadge();setTimeout(()=>{const bi=document.getElementById("btnInstalar");if(bi)bi.hidden=appInstalado()},0);
   $("#farmName").textContent=S.config.nome?S.config.nome+(MODE==="demo"?" (exemplo)":""):"";
   const v={hoje:vHoje,lotes:vLotes,estrutura:vEstrutura,painel:vPainel,atividades:vAtividades,trato:vTrato,abates:vAbates,rebanho:vRebanho,pesagens:vPesagens,decisao:vDecisao,caixa:vCaixa,sanidade:vSanidade,racao:vRacao,base:vBase,conta:vConta}[ui.tab]||vHoje;
   $("#app").innerHTML=banner()+v();
@@ -2586,7 +2600,7 @@ function vHoje(){
   const dv=dietas().find(d=>d.k==="vazias");const cpd=dv&&dv.r.status==="ok"?dv.r.custoKgMS*dv.cmsMed:null;
   const {lista}=indicadores();const nt=nota(lista);
   const dn=["domingo","segunda","terça","quarta","quinta","sexta","sábado"][HOJE.getDay()];
-  return `<div class="hoje-head"><div><h2>Hoje, ${dn} ${fd(HOJE).slice(0,5)}</h2><p class="muted small" style="margin:0">${ativos().length} animais ativos${nt!=null?` · nota do rebanho <b>${nt}</b>/100`:""}</p></div>
+  return `${bannerInstalar()}<div class="hoje-head"><div><h2>Hoje, ${dn} ${fd(HOJE).slice(0,5)}</h2><p class="muted small" style="margin:0">${ativos().length} animais ativos${nt!=null?` · nota do rebanho <b>${nt}</b>/100`:""}</p></div>
    <button type="button" class="btn" data-act="resumo">Copiar resumo para WhatsApp</button></div>
   <section class="panel" style="margin-bottom:16px"><h3>O que aconteceu?</h3>${quickGrid()}</section>
   <div class="grid g2">
@@ -2652,7 +2666,8 @@ document.addEventListener("click",e=>{
   else if(a==="comecar")comecarReal();
   else if(a==="backup")exportarBackup();
   else if(a==="restaurar")importarBackup();
-  else if(a==="instalar"){if(window.__instalar){window.__instalar.prompt();window.__instalar=null;render()}}
+  else if(a==="instalar"){if(window.__instalar){window.__instalar.prompt();window.__instalar=null;render()}else comoInstalar()}
+  else if(a==="instalar-fechar"){try{localStorage.setItem("cn_instalar_fechado","1")}catch(e){}render()}
   else if(a==="rapido")formRapido();
   else if(a==="q"){abrirQuick(t.dataset.q)}
   else if(a==="mais"){ui.mais=!(ui.mais||TABS.slice(TABS_MAIN).some(([k])=>k===ui.tab));if(!ui.mais&&TABS.slice(TABS_MAIN).some(([k])=>k===ui.tab))ui.tab="hoje";render()}
@@ -2708,5 +2723,6 @@ initStore();
 /* Site próprio: funciona offline e pode ser instalado no celular */
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))}
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();window.__instalar=e;const b=document.getElementById("btnInstalar");if(b)b.hidden=false});
+window.addEventListener("appinstalled",()=>{window.__instalar=null;try{localStorage.setItem("cn_instalar_fechado","1")}catch(e){}if(typeof toast==="function")toast("Curral Novo instalado. Abra pelo ícone na tela inicial.");if(typeof render==="function")render()});
 </script>
 </body></html>
