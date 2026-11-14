@@ -230,6 +230,9 @@ body{background:var(--bg)}
 .brand .farm{color:#DCE7DF;font-size:14px;padding:3px 10px;border:1px solid rgba(246,241,228,.22);border-radius:999px}
 .brand .farm:empty{display:none}
 .sync{margin-left:auto;font:inherit;font-size:12.5px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid rgba(246,241,228,.25);background:rgba(255,255,255,.08);color:#F6F1E4;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.instalar{margin-left:auto;font:inherit;font-size:13px;font-weight:700;border-radius:999px;padding:5px 13px;border:1px solid var(--sun);background:var(--sun);color:#1B2A20;cursor:pointer;white-space:nowrap}
+.instalar:hover{filter:brightness(1.06)}
+.instalar:not([hidden])+.sync{margin-left:0}
 .sync::before{content:"";width:8px;height:8px;border-radius:50%;background:#6FCF97}
 .sync.off::before{background:var(--sun)} .sync.busy::before{background:#8DB8E0;animation:pulse 1s infinite}
 .sync.off{background:rgba(233,164,60,.18);border-color:rgba(233,164,60,.5)}
@@ -258,7 +261,7 @@ h2::after{content:"";display:block;width:38px;height:3px;border-radius:3px;backg
 
 <header class="top">
   <div class="wrap">
-    <div class="brand"><div class="bt"><h1>Curral <span>Novo</span></h1><span class="tag">gestão de ovinos</span></div><span class="farm" id="farmName"></span><button type="button" class="sync" id="sync" data-act="sync" hidden></button></div>
+    <div class="brand"><div class="bt"><h1>Curral <span>Novo</span></h1><span class="tag">gestão de ovinos</span></div><span class="farm" id="farmName"></span><button type="button" class="instalar" id="btnInstalarTopo" data-act="instalar" hidden>Instalar app</button><button type="button" class="sync" id="sync" data-act="sync" hidden></button></div>
     <nav class="tabs" role="tablist" id="tabs"></nav>
     <nav class="tabs sub" id="tabs2" hidden></nav>
   </div>
@@ -1152,7 +1155,7 @@ function banner(){
   <button class="btn" data-act="importar">Importar planilha de cadastro</button><button class="btn primary" data-act="comecar">Começar meu rebanho</button></div>`;
 }
 function render(){
-  renderTabs();syncBadge();setTimeout(()=>{const bi=document.getElementById("btnInstalar");if(bi)bi.hidden=!window.__instalar},0);
+  renderTabs();syncBadge();cnBotaoInstalar();
   $("#farmName").textContent=S.config.nome?S.config.nome+(MODE==="demo"?" (exemplo)":""):"";
   const v={hoje:vHoje,lotes:vLotes,estrutura:vEstrutura,painel:vPainel,atividades:vAtividades,trato:vTrato,abates:vAbates,rebanho:vRebanho,pesagens:vPesagens,decisao:vDecisao,caixa:vCaixa,sanidade:vSanidade,racao:vRacao,base:vBase,conta:vConta}[ui.tab]||vHoje;
   $("#app").innerHTML=banner()+v();
@@ -2006,13 +2009,24 @@ function vBase(){
    ${MODE!=="demo"?`<span class="muted small" style="align-self:center">Dados salvos ${MODE==="db"||MODE==="cache"?"neste aparelho e na nuvem, junto a este app":"neste aparelho"}.</span>`:""}</div>
    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><b>Cópia de segurança</b>
    <p class="small muted" style="margin:2px 0 8px">Gere um arquivo com todo o rebanho e guarde no Drive ou mande para você no WhatsApp. Serve para não perder dados se o celular quebrar e para passar o rebanho para outro aparelho.</p>
-   <div style="display:flex;gap:8px;flex-wrap:wrap">${MODE!=="demo"?`<button class="btn" data-act="backup">Baixar cópia de segurança</button>`:""}<button class="btn" data-act="restaurar">Restaurar uma cópia</button>${contaLigada()?`<button class="btn" data-tab="conta">Minha conta e sincronização</button>`:""}<button class="btn" data-act="instalar" id="btnInstalar" hidden>Instalar no celular</button></div></div>
+   <div style="display:flex;gap:8px;flex-wrap:wrap">${MODE!=="demo"?`<button class="btn" data-act="backup">Baixar cópia de segurança</button>`:""}<button class="btn" data-act="restaurar">Restaurar uma cópia</button>${contaLigada()?`<button class="btn" data-tab="conta">Minha conta e sincronização</button>`:""}${cnInstalado()?"":`<button class="btn" data-act="instalar" id="btnInstalar">Instalar no celular</button>`}</div></div>
   </section>`;
 }
 
 /* ===================== Formulários (modais) ===================== */
 function modal(html){$("#modalRoot").innerHTML=`<div class="modal-back" data-close="1"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;const f=$("#modalRoot input,#modalRoot select");if(f)f.focus()}
 function fechar(){$("#modalRoot").innerHTML=""}
+/* Instalar no celular ou computador: usa o aviso do navegador quando existe; senão, mostra o caminho pelo menu */
+function cnInstalado(){return !!window.__instalado||matchMedia("(display-mode: standalone)").matches||navigator.standalone===true}
+function cnBotaoInstalar(){const b=document.getElementById("btnInstalarTopo");if(b)b.hidden=cnInstalado()}
+async function cnInstalar(){
+  const ev=window.__instalar;
+  if(ev){window.__instalar=null;ev.prompt();try{await ev.userChoice}catch(_){}return}
+  const ua=navigator.userAgent,ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1),android=/Android/.test(ua);
+  const passos=ios?["Abra este endereço no <b>Safari</b> (no iPhone, a instalação só funciona por ele).","Toque no botão <b>Compartilhar</b> (o quadrado com a seta para cima).","Escolha <b>Adicionar à Tela de Início</b> e confirme em <b>Adicionar</b>."]
+    :android?["Abra este endereço no <b>Chrome</b>.","Toque no menu <b>⋮</b>, no canto de cima da tela.","Escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b> e confirme."]
+    :["Abra este endereço no <b>Chrome</b> ou no <b>Edge</b>.","Clique no ícone de instalar, no canto direito da barra de endereço, ou abra o menu <b>⋮</b>.","Escolha <b>Instalar Curral Novo</b> e confirme."];
+  modal(`<h2>Instalar o Curral Novo</h2><p class="muted">O app fica com ícone próprio na tela ${ios||android?"do celular":"do computador"} e abre mesmo sem internet.</p><ol style="margin:12px 0 0;padding-left:22px;line-height:1.7">${passos.map(x=>`<li>${x}</li>`).join("")}</ol><p class="small muted" style="margin-top:12px">Endereço do app: <b>curral-novo.vercel.app</b></p><div class="actions"><button type="button" class="btn primary" data-close="1">Entendi</button></div>`)}
 function optAnimais(sel,filtro=()=>true,vazio="—"){
   return `<option value="">${vazio}</option>`+S.animais.filter(a=>a.status==="ativo"&&filtro(a)).sort((a,b)=>a.brinco.localeCompare(b.brinco,"pt",{numeric:true})).map(a=>`<option value="${a.id}"${a.id===sel?" selected":""}>${esc(a.brinco)} · ${categoria(a)}</option>`).join("");
 }
@@ -2652,7 +2666,7 @@ document.addEventListener("click",e=>{
   else if(a==="comecar")comecarReal();
   else if(a==="backup")exportarBackup();
   else if(a==="restaurar")importarBackup();
-  else if(a==="instalar"){if(window.__instalar){window.__instalar.prompt();window.__instalar=null;render()}}
+  else if(a==="instalar")cnInstalar();
   else if(a==="rapido")formRapido();
   else if(a==="q"){abrirQuick(t.dataset.q)}
   else if(a==="mais"){ui.mais=!(ui.mais||TABS.slice(TABS_MAIN).some(([k])=>k===ui.tab));if(!ui.mais&&TABS.slice(TABS_MAIN).some(([k])=>k===ui.tab))ui.tab="hoje";render()}
@@ -2707,6 +2721,7 @@ initStore();
 <script>
 /* Site próprio: funciona offline e pode ser instalado no celular */
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))}
-window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();window.__instalar=e;const b=document.getElementById("btnInstalar");if(b)b.hidden=false});
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();window.__instalar=e;cnBotaoInstalar()});
+window.addEventListener("appinstalled",()=>{window.__instalar=null;window.__instalado=true;cnBotaoInstalar();const b=document.getElementById("btnInstalar");if(b)b.remove();toast("Curral Novo instalado neste aparelho")});
 </script>
 </body></html>
