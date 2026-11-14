@@ -2020,9 +2020,15 @@ function fechar(){$("#modalRoot").innerHTML=""}
 function cnInstalado(){return !!window.__instalado||matchMedia("(display-mode: standalone)").matches||navigator.standalone===true}
 function cnBotaoInstalar(){const b=document.getElementById("btnInstalarTopo");if(b)b.hidden=cnInstalado()}
 async function cnInstalar(){
-  const ev=window.__instalar;
-  if(ev){window.__instalar=null;ev.prompt();try{await ev.userChoice}catch(_){}return}
   const ua=navigator.userAgent,ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1),android=/Android/.test(ua);
+  /* O navegador pode demorar alguns segundos para liberar a instalação: espera um pouco antes de desistir */
+  if(!window.__instalar&&!ios&&"onbeforeinstallprompt" in window){toast("Preparando a instalação…");for(let i=0;i<12&&!window.__instalar;i++)await new Promise(r=>setTimeout(r,250))}
+  const ev=window.__instalar;
+  if(ev){
+    try{await ev.prompt()}catch(_){toast("Toque em Instalar app de novo para confirmar");return}
+    window.__instalar=null;
+    try{const r=await ev.userChoice;if(r&&r.outcome==="dismissed")toast("Instalação cancelada. Toque em Instalar app quando quiser.")}catch(_){}
+    return}
   const passos=ios?["Abra este endereço no <b>Safari</b> (no iPhone, a instalação só funciona por ele).","Toque no botão <b>Compartilhar</b> (o quadrado com a seta para cima).","Escolha <b>Adicionar à Tela de Início</b> e confirme em <b>Adicionar</b>."]
     :android?["Abra este endereço no <b>Chrome</b>.","Toque no menu <b>⋮</b>, no canto de cima da tela.","Escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b> e confirme."]
     :["Abra este endereço no <b>Chrome</b> ou no <b>Edge</b>.","Clique no ícone de instalar, no canto direito da barra de endereço, ou abra o menu <b>⋮</b>.","Escolha <b>Instalar Curral Novo</b> e confirme."];
