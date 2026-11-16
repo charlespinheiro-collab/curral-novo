@@ -66,6 +66,21 @@ p{margin:0 0 8px}
 .btn.primary:hover{filter:brightness(1.07)}
 .btn.danger{color:var(--bad);border-color:var(--bad)}
 .btn.sm{padding:4px 9px;font-size:13px}
+.fotos-box{border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.fotos-box h3{margin:0 0 2px;font-size:15px}
+.fotos-lista{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.foto-mini{position:relative;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;width:76px;height:76px;background:var(--accent-soft);cursor:zoom-in;flex:none}
+.foto-mini img,.thumb{width:100%;height:100%;object-fit:cover;display:block}
+.foto-mini .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);color:#fff;font-size:10px;font-weight:700;text-align:center;padding:1px 0}
+.fotos-btns{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.thumb{width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);display:inline-block;vertical-align:middle;margin-right:8px}
+img[data-fid]:not([src]){visibility:hidden}
+.foto-view{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;padding:12px}
+.foto-view .cx{background:var(--surface);border-radius:12px;padding:14px;max-width:760px;width:100%;max-height:100%;overflow:auto}
+.foto-view h2{margin:0 0 8px;font-size:18px}
+.foto-view img{width:100%;max-height:68vh;object-fit:contain;border-radius:8px;background:#000}
+.foto-view .ln{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;margin-top:10px}
+.foto-view .ln>div{display:flex;flex-wrap:wrap;gap:6px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .score{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
 .ring{width:132px;height:132px;flex:none}
@@ -508,8 +523,8 @@ async function cnSync(manual){
   if(CN.rodando){CN.pendente=true;return}
   CN.rodando=true;CN.erro="";CN.status="Sincronizando…";cnRedesenhar();syncBadge();
   try{
-    const {collection,getDocs,doc,writeBatch,setDoc}=CN.mod.fs,uid=CN.user.uid,base="fazendas/"+uid+"/dados";
-    const rem={};(await getDocs(collection(CN.fs,base))).docs.forEach(d=>{try{rem[d.id]=JSON.parse(d.data().j)}catch(e){}});
+    const {doc,getDoc,writeBatch,setDoc}=CN.mod.fs,uid=CN.user.uid,base="fazendas/"+uid+"/dados";
+    const rem={};(await Promise.all(KEYS.map(k=>getDoc(doc(CN.fs,base+"/"+k))))).forEach((d,i)=>{if(d.exists())try{rem[KEYS[i]]=JSON.parse(d.data().j)}catch(e){}});
     const temNuvem=KEYS.some(k=>rem[k]!=null),primeira=lsG("cn_conta")!==uid;let recebidos=0,enviados=0;
     if(MODE==="demo"){
       if(temNuvem){ // aparelho novo: traz o rebanho da conta
@@ -530,8 +545,9 @@ async function cnSync(manual){
       if(ops.length){const bt=writeBatch(CN.fs);ops.forEach(([k,v])=>bt.set(doc(CN.fs,base+"/"+k),{j:JSON.stringify(v),ts:Date.now()}));await bt.commit();ops.forEach(([k,v])=>lsS("cn_base_"+k,v));enviados=ops.length}
       if(CN.perfil&&S.config.nome&&CN.perfil.nomeFazenda!==S.config.nome){CN.perfil={...CN.perfil,nomeFazenda:S.config.nome};await setDoc(doc(CN.fs,"fazendas/"+uid),CN.perfil)}
     }
+    let fotosErro=false;if(MODE!=="demo")try{if(await cnSyncFotos(base))recebidos=recebidos||1}catch(e){fotosErro=true}
     lsS("cn_conta",uid);lsS("cn_ultSync",Date.now());
-    CN.status=MODE==="demo"?"Conta conectada. Toque em Começar meu rebanho (ou importe a planilha) e os registros passam a sincronizar sozinhos.":`Sincronizado. ${recebidos?recebidos+" parte(s) recebida(s) da nuvem, ":""}${enviados?enviados+" parte(s) enviada(s).":"nada novo para enviar."}`;
+    CN.status=MODE==="demo"?"Conta conectada. Toque em Começar meu rebanho (ou importe a planilha) e os registros passam a sincronizar sozinhos.":`Sincronizado. ${recebidos?recebidos+" parte(s) recebida(s) da nuvem, ":""}${enviados?enviados+" parte(s) enviada(s).":"nada novo para enviar."}${fotosErro?" As fotos ainda não subiram; o app tenta de novo na próxima sincronização.":""}`;
     if(recebidos)_dietasCache=null;
     if(manual)toast("Sincronização concluída");
     if(recebidos)render();
@@ -1447,7 +1463,7 @@ function vRebanho(){
   </div>
   <div class="tbl-wrap"><table><thead><tr><th>Brinco</th><th>Sexo</th><th>Raça</th><th>Categoria</th><th>Lote</th><th class="r">Idade</th><th class="r">Último peso</th><th class="r">FAMACHA</th><th>Situação</th><th>Indicação</th></tr></thead><tbody>
   ${L.map(a=>{const p=ultimo(a.id,"peso"),f=ultimo(a.id,"famacha");const d=a.status==="ativo"?decidir(a):null;
-    return `<tr class="click" data-animal="${a.id}"><td><b>${esc(a.brinco)}</b>${a.nome?` <span class="muted">${esc(a.nome)}</span>`:""}</td><td>${a.sexo==="F"?"Fêmea":"Macho"}${a.castrado?" (castrado)":""}</td><td>${esc(a.raca||"—")}</td><td>${categoria(a)}</td><td>${a.status==="ativo"?esc(nomeLote(loteDe(a)))+(a.lote?" ✎":""):"—"}</td><td class="r">${idadeTxtA(a)}</td>
+    return `<tr class="click" data-animal="${a.id}"><td>${a.fotos&&a.fotos.length?`<img class="thumb" data-fid="${esc(a.fotos[0])}" alt="">`:""}<b>${esc(a.brinco)}</b>${a.nome?` <span class="muted">${esc(a.nome)}</span>`:""}</td><td>${a.sexo==="F"?"Fêmea":"Macho"}${a.castrado?" (castrado)":""}</td><td>${esc(a.raca||"—")}</td><td>${categoria(a)}</td><td>${a.status==="ativo"?esc(nomeLote(loteDe(a)))+(a.lote?" ✎":""):"—"}</td><td class="r">${idadeTxtA(a)}</td>
     <td class="r">${p?n1(p.peso)+" kg":"—"}</td><td class="r">${f?f.famacha:"—"}</td>
     <td>${a.status==="ativo"?"Ativo":a.status==="vendido"?"Vendido "+fd(a.dataSaida):a.status==="abatido"?"Abatido "+fd(a.dataSaida):"Morto "+fd(a.dataSaida)}</td><td>${d?`<span class="pill ${DEC_CLS[d.dec]}">${d.dec}</span>`:""}</td></tr>`}).join("")||`<tr><td colspan="11" class="empty">Nenhum animal. Use “+ Animal” para cadastrar um por um, ou <button class="btn sm" data-act="importar">Importar planilha</button> para cadastrar o rebanho todo de uma vez.</td></tr>`}
   </tbody></table></div>`;
@@ -1830,6 +1846,7 @@ async function exportarTrato(){
 /* Cópia de segurança: um arquivo com todo o rebanho */
 async function exportarBackup(){
   const o={app:"Curral Novo",versao:1,data:new Date().toISOString()};KEYS.forEach(k=>o[k]=bodyOf(k));
+  const fts={};for(const f of fotosUsadas()){const d=await fotoGet(f);if(d)fts[f]=d}if(Object.keys(fts).length)o.fotos=fts;
   await baixar("curral-novo-copia-"+iso(HOJE)+".json",new Blob([JSON.stringify(o)],{type:"application/json"}),"Cópia de segurança gerada. Guarde o arquivo no Drive ou no WhatsApp.");
 }
 function importarBackup(){
@@ -1840,6 +1857,7 @@ function importarBackup(){
     confirmar(`Restaurar a cópia de ${new Date(o.data).toLocaleString("pt-BR")}? Os dados atuais deste aparelho serão substituídos.`,()=>{
       const got={};KEYS.forEach(k=>{if(o[k])got[k]=o[k]});got.config={...(o.config||{}),iniciado:true};
       if(MODE==="demo")MODE=DB?"db":"local";
+      if(o.fotos&&typeof o.fotos==="object")Object.entries(o.fotos).forEach(([f,d])=>{if(typeof d==="string"&&d.startsWith("data:image/"))fotoPut(f,d).catch(()=>{})});
       applyLoaded(got);_dietasCache=null;KEYS.forEach(k=>persist(k));ui.tab="rebanho";render();toast("Cópia restaurada")})};rd.readAsText(f)};
   inp.click();
 }
@@ -2038,6 +2056,92 @@ async function cnInstalar(){
 function optAnimais(sel,filtro=()=>true,vazio="—"){
   return `<option value="">${vazio}</option>`+S.animais.filter(a=>a.status==="ativo"&&filtro(a)).sort((a,b)=>a.brinco.localeCompare(b.brinco,"pt",{numeric:true})).map(a=>`<option value="${a.id}"${a.id===sel?" selected":""}>${esc(a.brinco)} · ${categoria(a)}</option>`).join("");
 }
+/* ===================== Fotos do animal (opcional): câmera ou galeria =====================
+   Cada animal pode ter até MAX_FOTOS fotos. No cadastro fica só a lista de códigos (a.fotos; a primeira é a principal).
+   As imagens são reduzidas no aparelho (máx. 640 px, JPEG) e guardadas à parte (IndexedDB), para não pesar nos registros.
+   Com a conta da propriedade, cada foto sobe uma vez para a nuvem e desce nos outros aparelhos. */
+const MAX_FOTOS=6;
+const FOTO={mem:new Map(),db:null};
+function fotoDb(){if(!FOTO.db)FOTO.db=new Promise((res,rej)=>{const r=indexedDB.open("curral-novo-fotos",1);r.onupgradeneeded=()=>r.result.createObjectStore("fotos");r.onsuccess=()=>res(r.result);r.onerror=()=>{FOTO.db=null;rej(r.error)}});return FOTO.db}
+async function fotoTx(modo,fn){const db=await fotoDb();return new Promise((res,rej)=>{const t=db.transaction("fotos",modo),rq=fn(t.objectStore("fotos"));t.oncomplete=()=>res(rq?rq.result:undefined);t.onerror=t.onabort=()=>rej(t.error)})}
+async function fotoGet(id){if(FOTO.mem.has(id))return FOTO.mem.get(id);try{const v=await fotoTx("readonly",st=>st.get(id));if(v)FOTO.mem.set(id,v);return v||null}catch(e){return null}}
+async function fotoPut(id,d){FOTO.mem.set(id,d);if(MODE==="demo")return;await fotoTx("readwrite",st=>st.put(d,id))}
+async function fotoDel(id){FOTO.mem.delete(id);try{await fotoTx("readwrite",st=>st.delete(id))}catch(e){}}
+async function fotoKeys(){try{return (await fotoTx("readonly",st=>st.getAllKeys()))||[]}catch(e){return []}}
+function fotoApagar(ids){ids=(ids||[]).filter(Boolean);if(!ids.length)return;ids.forEach(fotoDel);if(MODE!=="demo"){lsS("cn_fotos_del",[...new Set([...(lsG("cn_fotos_del")||[]),...ids])]);if(typeof cnAgendar==="function")cnAgendar()}}
+const fotosUsadas=()=>{const u=new Set();S.animais.forEach(a=>(a.fotos||[]).forEach(f=>u.add(f)));return u};
+async function reduzirFoto(file,max=640,q=0.72){
+  const img=await new Promise((res,rej)=>{const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{URL.revokeObjectURL(u);res(i)};i.onerror=()=>{URL.revokeObjectURL(u);rej(new Error("img"))};i.src=u});
+  const k=Math.min(1,max/Math.max(img.naturalWidth||1,img.naturalHeight||1));
+  const c=document.createElement("canvas");c.width=Math.max(1,Math.round(img.naturalWidth*k));c.height=Math.max(1,Math.round(img.naturalHeight*k));
+  c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c.toDataURL("image/jpeg",q);
+}
+/* preenche as imagens marcadas com data-fid assim que aparecem na tela */
+function fotosHidratar(root){(root||document).querySelectorAll("img[data-fid]:not([src])").forEach(async im=>{const d=await fotoGet(im.dataset.fid);if(d&&!im.getAttribute("src"))im.src=d})}
+new MutationObserver(ms=>{if(ms.some(m=>[...m.addedNodes].some(n=>n.nodeType===1)))fotosHidratar(document)}).observe(document.documentElement,{childList:true,subtree:true});
+function fotosBlocoHtml(ids){
+  const cheio=ids.length>=MAX_FOTOS;
+  return `<h3>Fotos do animal <span class="muted small" style="font-weight:400">(opcional)</span></h3>
+   <p class="small muted" style="margin:0">Ajuda a reconhecer o animal no curral. Até ${MAX_FOTOS} fotos; a primeira é a principal.</p>
+   ${ids.length?`<div class="fotos-lista">${ids.map((f,i)=>`<button type="button" class="foto-mini" data-fver="${i}" aria-label="Ampliar foto ${i+1}"><img data-fid="${esc(f)}" alt="Foto ${i+1}">${i===0?`<span class="cap">principal</span>`:""}</button>`).join("")}</div>`:`<div style="height:8px"></div>`}
+   <div class="fotos-btns">${cheio?`<span class="small muted">Limite de ${MAX_FOTOS} fotos. Remova uma para adicionar outra.</span>`:`<label class="btn sm primary">${ids.length?"Mais uma foto":"Tirar foto"}<input type="file" accept="image/*" capture="environment" data-fadd="1" hidden></label><label class="btn sm">Da galeria<input type="file" accept="image/*" multiple data-fadd="1" hidden></label>`}${ids.length?`<span class="small muted">${ids.length} de ${MAX_FOTOS} · toque na foto para ampliar</span>`:""}</div>`;
+}
+/* liga o bloco de fotos de uma ficha: get() devolve a lista atual, set(lista) grava; imediato=true guarda a imagem no aparelho na hora */
+function fotosLigar(box,get,set,nome,imediato){
+  const desenhar=()=>{box.innerHTML=fotosBlocoHtml(get());fotosHidratar(box)};
+  box.addEventListener("click",e=>{const b=e.target.closest("[data-fver]");if(b){e.preventDefault();fotoViewer(get,+b.dataset.fver,nome(),ids=>{set(ids);desenhar()})}});
+  box.addEventListener("change",async e=>{
+    const el=e.target;if(!el.dataset||!el.dataset.fadd||!el.files||!el.files.length)return;e.stopPropagation();
+    const files=[...el.files];el.value="";const vagas=MAX_FOTOS-get().length;
+    if(vagas<=0){toast(`Limite de ${MAX_FOTOS} fotos por animal`);return}
+    const imgs=files.filter(f=>/^image\//.test(f.type||"image/"));if(!imgs.length){toast("Escolha um arquivo de imagem");return}
+    const usar=imgs.slice(0,vagas);toast(usar.length>1?`Preparando ${usar.length} fotos…`:"Preparando a foto…");
+    const novas=[];
+    for(const f of usar){try{const d=await reduzirFoto(f),id="f"+uid();if(imediato)await fotoPut(id,d);else FOTO.mem.set(id,d);novas.push(id)}catch(x){}}
+    if(!novas.length){toast("Não foi possível usar esta foto. O aparelho pode estar sem espaço.");return}
+    set([...get(),...novas]);desenhar();
+    const sobra=imgs.length-usar.length;
+    toast((novas.length===1?"Foto adicionada":`${novas.length} fotos adicionadas`)+(sobra>0?` (${sobra} não ${sobra===1?"coube":"couberam"}: limite de ${MAX_FOTOS})`:""));
+  });
+  desenhar();
+}
+function fotoViewer(get,ix,nome,set){
+  let el=document.getElementById("fotoView");if(el)el.remove();
+  const ids=get();if(!ids.length)return;ix=Math.max(0,Math.min(ix,ids.length-1));
+  el=document.createElement("div");el.id="fotoView";el.className="foto-view";
+  el.innerHTML=`<div class="cx" role="dialog" aria-modal="true"><h2>${esc(nome||"Animal")} · foto ${ix+1} de ${ids.length}${ix===0?" (principal)":""}</h2>
+    <img data-fid="${esc(ids[ix])}" alt="Foto ${ix+1}">
+    <div class="ln"><div><button type="button" class="btn sm" id="fvAnt" ${ix===0?"disabled":""}>‹ Anterior</button><button type="button" class="btn sm" id="fvProx" ${ix>=ids.length-1?"disabled":""}>Próxima ›</button></div>
+    <div>${set&&ix>0?`<button type="button" class="btn sm" id="fvCapa">Usar como principal</button>`:""}${set?`<button type="button" class="btn sm danger" id="fvDel">Remover esta foto</button>`:""}<button type="button" class="btn sm primary" id="fvFechar">Fechar</button></div></div></div>`;
+  document.body.appendChild(el);fotosHidratar(el);
+  const q=x=>el.querySelector(x),sair=()=>el.remove();
+  el.addEventListener("click",e=>{e.stopPropagation();if(e.target===el)sair()});
+  q("#fvFechar").onclick=sair;q("#fvAnt").onclick=()=>fotoViewer(get,ix-1,nome,set);q("#fvProx").onclick=()=>fotoViewer(get,ix+1,nome,set);
+  if(q("#fvCapa"))q("#fvCapa").onclick=()=>{set([ids[ix],...ids.filter((_,i)=>i!==ix)]);toast("Foto principal alterada");fotoViewer(get,0,nome,set)};
+  if(q("#fvDel"))q("#fvDel").onclick=function(){
+    if(!this.dataset.ok){this.dataset.ok="1";this.textContent="Confirmar: remover";return}
+    const n=ids.filter((_,i)=>i!==ix);set(n);toast("Foto removida");if(n.length)fotoViewer(get,Math.min(ix,n.length-1),nome,set);else sair()};
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){const v=document.getElementById("fotoView");if(v){v.remove();e.stopPropagation()}}},true);
+/* fotos na conta da propriedade: sobe as que faltam na nuvem, traz as que faltam aqui e apaga as removidas */
+async function cnSyncFotos(base){
+  const {doc,getDoc,setDoc,deleteDoc}=CN.mod.fs,uidC=CN.user.uid,ref=id=>doc(CN.fs,base+"/foto_"+id);
+  const usadas=fotosUsadas();let baixou=0;
+  let del=(lsG("cn_fotos_del")||[]).filter(id=>!usadas.has(id));
+  for(const id of [...del]){try{await deleteDoc(ref(id));del=del.filter(x=>x!==id)}catch(e){break}}
+  lsS("cn_fotos_del",del.length?del:null);
+  const chUp="cn_fotos_up_"+uidC;let up=new Set((lsG(chUp)||[]).filter(id=>usadas.has(id)));
+  const locais=new Set(await fotoKeys());
+  for(const id of usadas){
+    if(locais.has(id)){if(!up.has(id)){const d=await fotoGet(id);if(d){await setDoc(ref(id),{f:d,ts:Date.now()});up.add(id);lsS(chUp,[...up])}}}
+    else{try{const sn=await getDoc(ref(id));if(sn.exists()&&sn.data().f){await fotoPut(id,sn.data().f);up.add(id);baixou++}}catch(e){}}
+  }
+  lsS(chUp,[...up]);
+  for(const id of locais)if(!usadas.has(id))fotoDel(id); // foto removida em outro aparelho
+  if(baixou){fotosHidratar(document);}
+  return baixou;
+}
+
 function fichaAnimal(id){
   const a=id?byId(id):{id:"",brinco:"",nome:"",sexo:"F",castrado:false,nasc:iso(HOJE),raca:"",mae:"",origem:"nascido",status:"ativo",defeitos:[],obs:""};
   const novo=!id;
@@ -2051,7 +2155,7 @@ function fichaAnimal(id){
      ${ev.length?`<h3 style="margin-top:10px">Sanidade</h3>${ev.slice(0,5).map(s=>`<div class="small">${fd(s.data)} · ${SAN_TIPOS[s.tipo]}: ${esc(s.desc)}</div>`).join("")}`:""}</div></div>`;
   }
   modal(`<h2>${novo?"Novo animal":"Ficha do animal "+esc(a.brinco)}</h2>${extra}
-  <form id="fAnimal"><div class="form-grid">
+  <form id="fAnimal"><div class="fotos-box" id="aFotos"></div><div class="form-grid">
    <label class="f">Brinco *<input id="aBrinco" required value="${esc(a.brinco)}"></label>
    <label class="f">Nome<input id="aNome" value="${esc(a.nome)}"></label>
    <label class="f">Sexo<select id="aSexo"><option value="F"${a.sexo==="F"?" selected":""}>Fêmea</option><option value="M"${a.sexo==="M"?" selected":""}>Macho</option></select></label>
@@ -2077,6 +2181,14 @@ function fichaAnimal(id){
   <label class="f" style="margin-top:10px">Observações<textarea id="aObs">${esc(a.obs)}</textarea></label>
   <div class="actions">${novo?"":`<button type="button" class="btn danger left" data-act="delAnimal" data-id="${a.id}">Apagar animal</button><button type="button" class="btn" data-act="pesar" data-id="${a.id}">+ Pesagem</button>`}<button type="button" class="btn" data-close="1">Cancelar</button><button class="btn primary" type="submit">Salvar</button></div>
   </form>`);
+  let fotos=[...(a.fotos||[])];
+  fotosLigar($("#aFotos"),()=>fotos,ids=>{
+    const fora=fotos.filter(f=>!ids.includes(f));fotos=ids;
+    if(novo){fora.forEach(f=>FOTO.mem.delete(f));return}
+    fotoApagar(fora);
+    const i=S.animais.findIndex(x=>x.id===a.id);if(i<0)return;
+    const o={...S.animais[i]};if(ids.length)o.fotos=ids;else delete o.fotos;S.animais[i]=o;save("animais");render();
+  },()=>$("#aBrinco").value.trim()||a.brinco||"Novo animal",!novo);
   const updId=()=>{const dn=$("#aIdPor").value==="dent";$("#boxNasc").hidden=dn;$("#boxDent").hidden=!dn;$("#boxDentData").hidden=!dn;
     $("#idHint").textContent=dn?(()=>{const d=DENT.find(x=>x.k===$("#aDent").value);return `Idade aproximada: ${d.faixa}. Estimativa usada: ${d.m} meses na data da avaliação. A troca dos dentes varia com a alimentação e o manejo.`})():""};
   if(novo)$("#aMae").addEventListener("change",()=>{const m=byId($("#aMae").value);if(m&&m.raca&&!$("#aRacaSel").value){$("#aRacaSel").innerHTML=`<option value="">Não informada</option>`+optRacas(m.raca);if(!RACAS_TODAS.includes(m.raca))$("#aRaca").value=m.raca;updRaca()}});
@@ -2093,6 +2205,8 @@ function fichaAnimal(id){
     const o={...a,brinco,nome:$("#aNome").value.trim(),sexo:$("#aSexo").value,nasc:$("#aNasc").value,raca:$("#aRacaSel").value==="__outra"?$("#aRaca").value.trim():$("#aRacaSel").value,mae:$("#aMae").value,origem:$("#aOrig").value,status:$("#aStatus").value,dataSaida:$("#aSaida").value||"",motivoSaida:$("#aMotivo").value.trim(),castrado:$("#aCast").checked,obs:$("#aObs").value,
       defeitos:[...document.querySelectorAll("[data-def]")].filter(x=>x.checked).map(x=>x.dataset.def)};
     o.idadePor=$("#aIdPor").value;if($("#aLote").value)o.lote=$("#aLote").value;else delete o.lote;
+    if(fotos.length)o.fotos=fotos;else delete o.fotos;
+    if(novo)fotos.forEach(f=>{const d=FOTO.mem.get(f);if(d)fotoPut(f,d).catch(()=>toast("Não foi possível guardar a foto neste aparelho"))});
     if(o.idadePor==="dent"){const dd=DENT.find(x=>x.k===$("#aDent").value);o.dent=dd.k;o.dentData=$("#aDentData").value||iso(HOJE);o.nasc=iso(addD(o.dentData,-Math.round(dd.m*30.44)))}
     else{delete o.dent;delete o.dentData;if(!o.nasc){toast("Informe a data de nascimento");return}}
     if(o.status!=="ativo"&&!o.dataSaida)o.dataSaida=iso(HOJE);
@@ -2698,7 +2812,7 @@ document.addEventListener("click",e=>{
   else if(a==="delPes")confirmar("Apagar este registro de pesagem?",()=>{S.pesagens=S.pesagens.filter(p=>p.id!==id);save("pesagens")});
   else if(a==="delLanc")confirmar("Apagar este lançamento do caixa? Animais marcados como vendidos continuam vendidos; ajuste na ficha se necessário.",()=>{S.caixa=S.caixa.filter(c=>c.id!==id);save("caixa")});
   else if(a==="delEv")confirmar("Apagar esta ocorrência?",()=>{S.sanidade=S.sanidade.filter(s=>s.id!==id);save("sanidade")});
-  else if(a==="delAnimal")confirmar("Apagar este animal e todas as pesagens dele? Para registrar venda ou morte, mude a situação em vez de apagar.",()=>{S.animais=S.animais.filter(x=>x.id!==id);S.pesagens=S.pesagens.filter(p=>p.animal!==id);save("animais","pesagens")});
+  else if(a==="delAnimal")confirmar("Apagar este animal e todas as pesagens dele? Para registrar venda ou morte, mude a situação em vez de apagar.",()=>{fotoApagar((byId(id)||{}).fotos);S.animais=S.animais.filter(x=>x.id!==id);S.pesagens=S.pesagens.filter(p=>p.animal!==id);save("animais","pesagens")});
   else if(a==="salvarCfg"){
     S.config.nome=$("#cNome").value.trim();S.config.idadeDesm=Math.min(120,Math.max(45,+$("#cDesm").value||70));
     S.config.pesoAdulto=$("#cPeso").value?+$("#cPeso").value:null;S.config.precoKg=+$("#cPreco").value||13;S.config.iep=+$("#cIep").value||8;
